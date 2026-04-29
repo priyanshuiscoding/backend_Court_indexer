@@ -20,5 +20,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY alembic ./alembic
+COPY main.py ./main.py
 
 RUN mkdir -p /app/storage/pdfs /app/storage/rendered /app/storage/ocr /app/storage/exports /app/storage/logs /app/storage/config
