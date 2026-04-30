@@ -12,12 +12,11 @@ init_db()
 
 app = FastAPI(title=settings.APP_NAME)
 
-origin = [
+origin =[
     "http://localhost",
     "http://localhost:8000",
     "http://localhost:8001",
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origin,

@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+*.py[codz]
+*$py.class
+
+# Virtual environment
+.venv
+venv
+env/
+
+# Environment files
+.env
+
+# Logs
+app.log
+*.log
+src.log
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+src/yoyo/yoyo.ini
+yoyo.ini 
+**/yoyo.ini
+
+.env
+/.vs
+
+
