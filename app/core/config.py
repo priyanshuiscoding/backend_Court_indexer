@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import quote
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
+    REDIS_PASSWORD: str = ""
 
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
@@ -111,7 +113,10 @@ class Settings(BaseSettings):
 
     @property
     def redis_url(self) -> str:
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        auth = ""
+        if self.REDIS_PASSWORD:
+            auth = f":{quote(self.REDIS_PASSWORD, safe='')}@"
+        return f"redis://{auth}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     @property
     def qdrant_url(self) -> str:
