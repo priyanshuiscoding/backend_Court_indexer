@@ -1,6 +1,5 @@
-from fastapi import FastAPI
+﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -12,16 +11,9 @@ init_db()
 
 app = FastAPI(title=settings.APP_NAME)
 
-origin =[
-    "http://localhost",
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://localhost:3006",
-]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origin,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

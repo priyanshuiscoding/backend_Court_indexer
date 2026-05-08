@@ -1,30 +1,28 @@
-# Byte-compiled / optimized / DLL files
-*.py[codz]
-*$py.class
-
-# Virtual environment
-.venv
-venv
-env/
-
-# Environment files
-.env
-
-# Logs
-app.log
-*.log
-src.log
-
-# Ignore Python cache
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-src/yoyo/yoyo.ini
-yoyo.ini 
-**/yoyo.ini
+# Virtual environments
+.venv/
+venv/
 
+# Env and secrets
 .env
-/.vs
+*.env.local
 
+# Runtime data
+storage/
+celerybeat-schedule*
+*.log
 
-storage
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

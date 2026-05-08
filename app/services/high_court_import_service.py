@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.document import Document
+from app.models.high_court_import_job import HighCourtImportJob
 from app.schemas.high_court_import_models import HighCourtImportItemResult, HighCourtImportResponse
 from app.services.document_service import DocumentService
 from app.services.high_court_import_job_service import HighCourtImportJobService
@@ -29,41 +30,101 @@ class HighCourtImportService:
         self.job_service = HighCourtImportJobService()
 
     def import_pending(self, db: Session, limit: int | None = None) -> HighCourtImportResponse:
-        effective_limit = min(500, int(limit or settings.HC_IMPORT_LIMIT or 10))
-        logger.info("High Court import_pending started limit=%s", effective_limit)
-        rows = self.mysql_service.fetch_pending_rows(effective_limit)
+        requested_limit = min(500, int(limit or settings.HC_IMPORT_LIMIT or 10))
+        multiplier = max(1, int(settings.HC_IMPORT_SCAN_MULTIPLIER or 5))
+        max_scan = max(requested_limit, int(settings.HC_IMPORT_MAX_SCAN or 500))
+        scan_limit = min(requested_limit * multiplier, max_scan)
+        logger.info("High Court import_pending started requested_limit=%s scan_limit=%s", requested_limit, scan_limit)
+        rows = self.mysql_service.fetch_pending_rows(scan_limit)
 
         results: list[HighCourtImportItemResult] = []
-        queued = 0
-        skipped = 0
+        imported = 0
+        skipped_existing = 0
+        pdf_not_found = 0
         failed = 0
 
         for row in rows:
+            if imported >= requested_limit:
+                break
+
+            external_row_id = str(row.get("id")) if row.get("id") is not None else None
+            batch_no = str(row.get("batch_no") or "").replace(",", "").strip()
+            fil_no = str(row.get("fil_no")).strip() if row.get("fil_no") is not None else None
+            if not batch_no:
+                results.append(
+                    HighCourtImportItemResult(
+                        external_row_id=external_row_id,
+                        batch_no=None,
+                        fil_no=fil_no,
+                        status="FAILED",
+                        error="Missing batch_no",
+                    )
+                )
+                failed += 1
+                continue
+
+            if self._already_imported(db, external_row_id=external_row_id, batch_no=batch_no):
+                logger.info("Skipping existing High Court row id=%s batch_no=%s", external_row_id, batch_no)
+                skipped_existing += 1
+                results.append(
+                    HighCourtImportItemResult(
+                        external_row_id=external_row_id,
+                        batch_no=batch_no,
+                        fil_no=fil_no,
+                        status="SKIPPED_EXISTING",
+                        error=None,
+                    )
+                )
+                continue
+
             result = self._import_one(db, row)
             results.append(result)
             if result.status == "QUEUED":
-                queued += 1
+                imported += 1
+                logger.info("Imported High Court batch_no=%s document_id=%s", result.batch_no, result.document_id)
             elif result.status == "SKIPPED_DUPLICATE":
-                skipped += 1
+                skipped_existing += 1
+                logger.info("Skipped duplicate High Court batch_no=%s", result.batch_no)
+            elif result.status == "PDF_NOT_FOUND":
+                pdf_not_found += 1
             else:
                 failed += 1
 
         response = HighCourtImportResponse(
-            ok=failed == 0,
+            ok=True,
+            requested_limit=requested_limit,
+            scan_limit=scan_limit,
+            scanned=len(rows),
             fetched=len(rows),
-            queued=queued,
-            skipped=skipped,
+            imported=imported,
+            queued=imported,
+            skipped=skipped_existing,
+            skipped_existing=skipped_existing,
+            pdf_not_found=pdf_not_found,
             failed=failed,
             results=results,
         )
         logger.info(
-            "High Court import_pending completed fetched=%s queued=%s skipped=%s failed=%s",
+            "High Court import_pending completed scanned=%s imported=%s skipped_existing=%s pdf_not_found=%s failed=%s",
             response.fetched,
-            response.queued,
-            response.skipped,
+            response.imported,
+            response.skipped_existing,
+            response.pdf_not_found,
             response.failed,
         )
         return response
+
+    def _already_imported(self, db: Session, *, external_row_id: str | None, batch_no: str) -> bool:
+        conditions = [HighCourtImportJob.batch_no == batch_no]
+        if external_row_id:
+            conditions.append(HighCourtImportJob.external_row_id == external_row_id)
+
+        existing_job = db.scalars(select(HighCourtImportJob).where(or_(*conditions)).limit(1)).first()
+        if existing_job:
+            return True
+
+        existing_doc = db.scalars(select(Document).where(Document.batch_no == batch_no).limit(1)).first()
+        return existing_doc is not None
 
     def import_by_batch_no(self, db: Session, batch_no: str) -> HighCourtImportItemResult:
         row = {
@@ -95,7 +156,7 @@ class HighCourtImportService:
                     error="Missing batch_no",
                 )
 
-            batch_no_str = str(batch_no).strip()
+            batch_no_str = str(batch_no).replace(",", "").strip()
             fil_no_str = str(fil_no).strip() if fil_no is not None else None
             job = self.job_service.upsert_discovered(
                 db,
@@ -123,8 +184,39 @@ class HighCourtImportService:
             db.commit()
 
             pdf_path = self.pdf_resolver.resolve_pdf(batch_no_str)
+            if pdf_path is None:
+                raise FileNotFoundError(f"PDF not found for batch_no={batch_no_str}")
+            if not Path(pdf_path).exists():
+                raise FileNotFoundError(f"Resolved PDF missing on disk: {pdf_path}")
             self.job_service.mark_pdf_found(db, job, str(pdf_path))
             db.commit()
+
+            # Duplicate protection by batch_no before creating a new document.
+            existing_by_batch = (
+                select(Document)
+                .where(Document.batch_no == batch_no_str)
+                .order_by(Document.created_at.desc())
+                .limit(1)
+            )
+            existing_doc = db.scalars(existing_by_batch).first()
+            if existing_doc:
+                self.job_service.mark_skipped_duplicate(
+                    db,
+                    job,
+                    document_id=existing_doc.id,
+                    pdf_path=str(pdf_path),
+                )
+                db.commit()
+                logger.info("Skipped High Court batch_no=%s because document already exists id=%s", batch_no_str, existing_doc.id)
+                return HighCourtImportItemResult(
+                    external_row_id=external_row_id,
+                    batch_no=batch_no_str,
+                    fil_no=fil_no_str,
+                    pdf_path=str(pdf_path),
+                    status="SKIPPED_DUPLICATE",
+                    document_id=existing_doc.id,
+                    error=None,
+                )
 
             stmt = (
                 select(Document)
@@ -202,7 +294,7 @@ class HighCourtImportService:
                 db.commit()
             return HighCourtImportItemResult(
                 external_row_id=external_row_id,
-                batch_no=str(batch_no) if batch_no is not None else None,
+                batch_no=str(batch_no).replace(",", "").strip() if batch_no is not None else None,
                 fil_no=str(fil_no) if fil_no is not None else None,
                 pdf_path=None,
                 status="PDF_NOT_FOUND",
@@ -216,7 +308,7 @@ class HighCourtImportService:
                 db.commit()
             return HighCourtImportItemResult(
                 external_row_id=external_row_id,
-                batch_no=str(batch_no) if batch_no is not None else None,
+                batch_no=str(batch_no).replace(",", "").strip() if batch_no is not None else None,
                 fil_no=str(fil_no) if fil_no is not None else None,
                 pdf_path=None,
                 status="FAILED",

@@ -1,5 +1,4 @@
 from functools import lru_cache
-from urllib.parse import quote
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,7 +22,6 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
-    REDIS_PASSWORD: str = ""
 
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
@@ -89,6 +87,11 @@ class Settings(BaseSettings):
     HC_MYSQL_PASSWORD: str = ""
     HC_MYSQL_TABLE: str = "mp_indexing_batch"
     HC_MOUNT_ROOT: str = "/mnt/hitachi_disk1/JBP/SCANNING/scaned_clean_final"
+    HC_IMPORT_ORDER: str = "ASC"
+    HC_IMPORT_SCAN_MULTIPLIER: int = 5
+    HC_IMPORT_MAX_SCAN: int = 500
+    HC_PDF_RESOLVE_RECURSIVE: bool = True
+    HC_PDF_RESOLVE_MAX_DEPTH: int = 3
     HC_IMPORT_LIMIT: int = 10
     HC_SOURCE_SYSTEM: str = "high_court_mysql"
     HC_MYSQL_MARK_COMPLETE_ENABLED: bool = False
@@ -113,10 +116,7 @@ class Settings(BaseSettings):
 
     @property
     def redis_url(self) -> str:
-        auth = ""
-        if self.REDIS_PASSWORD:
-            auth = f":{quote(self.REDIS_PASSWORD, safe='')}@"
-        return f"redis://{auth}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     @property
     def qdrant_url(self) -> str:
